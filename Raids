@@ -1,0 +1,1106 @@
+--[[
+=========================================================
+    RAID HUB  |  Rayfield UI
+    - Funcion InstantKill copiada tal cual del original (4-5)
+    - Aplicada a TODAS LAS ISLAS (1 a 5)
+    - + REMATE real (RegisterHit) para que si terminen de morir
+    - El UNICO tween es el cambio de isla
+=========================================================
+]]
+
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+
+--===================== SERVICIOS =====================
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local LocalPlayer = Players.LocalPlayer
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+	character = char
+	humanoid = char:WaitForChild("Humanoid")
+	humanoidRootPart = char:WaitForChild("HumanoidRootPart")
+end)
+
+local data = LocalPlayer:WaitForChild("Data")
+local beli = data:WaitForChild("Beli")
+local fragments = data:WaitForChild("Fragments")
+
+--===================== REMOTES / ENTORNO =====================
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local commF = remotes:WaitForChild("CommF_")
+local modules = ReplicatedStorage:WaitForChild("Modules")
+local net = modules:WaitForChild("Net")
+local ItemConfig = require(ReplicatedStorage.ItemConfig)
+
+local enemies = Workspace:WaitForChild("Enemies")
+local map = Workspace:WaitForChild("Map")
+local worldOrigin = Workspace:WaitForChild("_WorldOrigin")
+local MAP = Workspace:GetAttribute("MAP")
+local isSea2 = MAP == "Sea2"
+local isSea3 = MAP == "Sea3"
+
+local function FireInvoke(...)
+	return commF:InvokeServer(select(2, ...))
+end
+
+--===================== CONFIG =====================
+local Config = {
+	AutoRaid = false,
+	InstantKillAll = true,
+	AutoBuyChip = false,
+	SelectRaid = nil,
+	AutoUnstoreBelowFruit = false,
+	Autostopraid = false,
+	FragsCap = 1000,
+	AutoAwaken = false,
+	AutoDungeonFull = false,
+	AutoDungeonShrine = false,
+	AutoCardsDungeon = false,
+	AutoLawRaid = false,
+	Random_Auto = false,
+	AutoStoreFruit = false,
+	Tweenfruit = false,
+	HopIfNoFruit = false,
+	FruitCheck = false,
+	CardsSelection = nil,
+	TweenSpeed = 250,
+}
+
+--===================== HELPERS =====================
+local function isAlive()
+	return humanoidRootPart and humanoidRootPart.Parent and humanoid and humanoid.Health > 0
+end
+
+local function CheckToolName(name)
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if character then
+		return character:FindFirstChild(name) or (backpack and backpack:FindFirstChild(name))
+	end
+end
+
+local function Checkfruit()
+	local lists = {}
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if backpack then table.insert(lists, backpack:GetChildren()) end
+	if character then table.insert(lists, character:GetChildren()) end
+	for _, list in ipairs(lists) do
+		for _, item in pairs(list) do
+			if item:IsA("Tool") then
+				if item:FindFirstChild("EatRemote") or item:FindFirstChild("DropRemote")
+					or item:GetAttribute("IsPhysical") or item:GetAttribute("Fruit")
+					or (item.ToolTip ~= "Blox Fruit" and string.find(item.Name, "Fruit")) then
+					return item.Name
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function EquipWeapon(weaponType)
+	local selectWeapon = weaponType or "Melee"
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if not backpack or not humanoid then return end
+	for _, child in ipairs(backpack:GetChildren()) do
+		if child:IsA("Tool") and child.ToolTip == selectWeapon then
+			humanoid:EquipTool(child)
+			return true
+		end
+	end
+end
+
+local function AutoHaki()
+	if not character then return end
+	if not character:HasTag("Buso") and beli.Value >= 25000 then
+		FireInvoke("BuyHaki", "Buso")
+	elseif character:HasTag("Buso") and not character:FindFirstChild("HasBuso") then
+		FireInvoke("Buso")
+	end
+end
+
+local function setSimRadius(radius)
+	pcall(function()
+		if sethiddenproperty then
+			sethiddenproperty(LocalPlayer, "SimulationRadius", radius)
+			sethiddenproperty(LocalPlayer, "MaxSimulationRadius", radius)
+		end
+	end)
+end
+
+--===================== INSTANT KILL (copiada tal cual del original, fn19) =====================
+local function InstantKill(arg)
+	for _, v22 in ipairs(arg) do
+		setSimRadius(math.huge)
+
+		if v22:FindFirstChild("Humanoid") then
+			v22.Humanoid.Health = 0
+		end
+
+		if v22:FindFirstChild("HumanoidRootPart") then
+			v22.HumanoidRootPart.CanCollide = false
+		end
+	end
+end
+
+--===================== TWEEN =====================
+local tweenState = { Counter = 0, StopFlag = false }
+
+local function stopTween()
+	tweenState.StopFlag = true
+	tweenState.Counter += 1
+end
+
+local function topos(target)
+	if not isAlive() then return end
+	local cf
+	if typeof(target) == "Vector3" then
+		cf = CFrame.new(target)
+	elseif typeof(target) == "CFrame" then
+		cf = target
+	elseif typeof(target) == "Instance" then
+		if target:IsA("BasePart") then
+			cf = target.CFrame
+		else
+			local p = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+			if p then cf = p.CFrame end
+		end
+	end
+	if not cf then return end
+
+	if (humanoidRootPart.Position - cf.Position).Magnitude > 3500 then
+		FireInvoke("requestEntrance", cf.Position)
+		task.wait(0.1)
+		if humanoidRootPart then
+			humanoidRootPart.CFrame = humanoidRootPart.CFrame + Vector3.new(0, 20)
+		end
+		task.wait(0.5)
+	end
+
+	tweenState.Counter += 1
+	local myCounter = tweenState.Counter
+	tweenState.StopFlag = false
+
+	task.spawn(function()
+		if not humanoidRootPart then return end
+		local startCF = humanoidRootPart.CFrame
+		local magnitude = (cf.Position - startCF.Position).Magnitude
+		if magnitude <= 5 then return end
+		local now = tick()
+		local travelled = 0
+		while tweenState.Counter == myCounter and not tweenState.StopFlag do
+			if not isAlive() then break end
+			if not humanoidRootPart or not humanoidRootPart.Parent then break end
+			local now2 = tick()
+			local dt = now2 - now
+			travelled += Config.TweenSpeed * dt
+			local alpha = math.clamp(travelled / magnitude, 0, 1)
+			humanoidRootPart.CFrame = startCF:Lerp(cf, alpha)
+			if alpha >= 1 or (cf.Position - humanoidRootPart.Position).Magnitude <= 10 then
+				humanoidRootPart.CFrame = cf
+				break
+			end
+			task.wait()
+			now = now2
+		end
+	end)
+end
+
+--===================== RAID HELPERS =====================
+local function getRaidTimer()
+	local pg = LocalPlayer:FindFirstChild("PlayerGui")
+	local main = pg and pg:FindFirstChild("Main")
+	local top = main and main:FindFirstChild("TopHUDList")
+	return top and top:FindFirstChild("RaidTimer")
+end
+
+local function GetRaidIslands()
+	local locations = worldOrigin:FindFirstChild("Locations")
+	if not locations then return nil end
+	for i = 5, 1, -1 do
+		local name = "Island " .. i
+		for _, child in ipairs(locations:GetChildren()) do
+			if child.Name == name and child:IsA("Part") and humanoidRootPart
+				and (humanoidRootPart.Position - child.Position).Magnitude < 3500 then
+				return child
+			end
+		end
+	end
+end
+
+local function GetCurrentRaidIslandIndex()
+	local island = GetRaidIslands()
+	if island and island.Name:match("Island (%d+)") then
+		return tonumber(island.Name:match("Island (%d+)"))
+	end
+	return nil
+end
+
+local function IsReady(model)
+	if not model or not model.Parent or not model:IsDescendantOf(Workspace) then return false end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	return hum ~= nil and hum.Health > 0
+end
+
+local function HayEnemigosVivos()
+	for _, child in ipairs(enemies:GetChildren()) do
+		local hum = child:FindFirstChild("Humanoid")
+		if hum and hum.Health > 0 then
+			return true
+		end
+	end
+	return false
+end
+
+local function EnemigosEnRango(radius)
+	local list = {}
+	if not humanoidRootPart then return list end
+	for _, child in ipairs(enemies:GetChildren()) do
+		local hum = child:FindFirstChild("Humanoid")
+		local hrp = child:FindFirstChild("HumanoidRootPart") or child.PrimaryPart
+		if hum and hrp and (hrp.Position - humanoidRootPart.Position).Magnitude < (radius or 150) then
+			table.insert(list, child)
+		end
+	end
+	return list
+end
+
+--===================== ATAQUE / REMATE =====================
+local validator2 = remotes:WaitForChild("Validator2")
+local reRegisterAttack = net:WaitForChild("RE/RegisterAttack")
+local RegisterHit = require(modules.Net):RemoteEvent("RegisterHit", true)
+
+local function clave()
+	return tostring(LocalPlayer.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15)
+end
+
+local function ArmaValida()
+	local tool = character and character:FindFirstChildOfClass("Tool")
+	if tool and table.find({ "Melee", "Sword", "Blox Fruit" }, tool.ToolTip or "") then
+		return tool
+	end
+	for _, tipo in ipairs({ "Melee", "Sword", "Blox Fruit" }) do
+		if EquipWeapon(tipo) then
+			task.wait(0.05)
+			tool = character and character:FindFirstChildOfClass("Tool")
+			if tool then return tool end
+		end
+	end
+	return nil
+end
+
+local function GetHits(radius)
+	local result = {}
+	if not humanoidRootPart then return result end
+	local maxHits = humanoidRootPart:FindFirstChild("Buddha") and 10 or 2
+	local candidates = {}
+	for _, mob in ipairs(enemies:GetChildren()) do
+		if IsReady(mob) then
+			local hrp = mob:FindFirstChild("HumanoidRootPart") or mob.PrimaryPart
+			if hrp then
+				local dist = (hrp.Position - humanoidRootPart.Position).Magnitude
+				if dist <= (radius or 50) then
+					table.insert(candidates, { mob, hrp, dist })
+				end
+			end
+		end
+	end
+	table.sort(candidates, function(a, b) return a[3] < b[3] end)
+	for i = 1, math.min(#candidates, maxHits) do
+		table.insert(result, { candidates[i][1], candidates[i][2] })
+	end
+	return result
+end
+
+local function FastAttack()
+	local tool = character and character:FindFirstChildOfClass("Tool")
+	if not tool then return end
+	local toolTip = tool.ToolTip
+	if toolTip == "Gun" then return end
+	if not table.find({ "Melee", "Blox Fruit", "Sword" }, toolTip) then return end
+
+	local hits = GetHits(toolTip == "Blox Fruit" and 100 or 50)
+	if #hits == 0 then return end
+
+	reRegisterAttack:FireServer(0)
+	local targets, first = {}, nil
+	for _, h in ipairs(hits) do
+		table.insert(targets, h)
+		first = first or h[2]
+	end
+	if first and RegisterHit then
+		RegisterHit:FireServer(first, targets, nil, nil, clave())
+	end
+end
+
+--===================== REMATE: el hit real que confirma la muerte =====================
+-- El InstantKill solo deja la vida en 0, pero si el mob no es tuyo el servidor no
+-- confirma la muerte y queda "a poca vida". Esto le manda el golpe real a TODOS
+-- los mobs de la isla de un solo tiro, para que el servidor los de por muertos.
+local function RematarIsla()
+	local tool = ArmaValida()
+	if not tool or not humanoidRootPart then return end
+
+	AutoHaki()
+
+	local targets, first = {}, nil
+	for _, mob in ipairs(EnemigosEnRango(200)) do
+		local hrp = mob:FindFirstChild("HumanoidRootPart") or mob.PrimaryPart
+		if hrp then
+			table.insert(targets, { mob, hrp })
+			first = first or hrp
+		end
+	end
+	if #targets == 0 or not first then return end
+
+	pcall(function() reRegisterAttack:FireServer(0) end)
+	pcall(function() RegisterHit:FireServer(first, targets, nil, nil, clave()) end)
+
+	-- ataque nativo de respaldo (por si el hit del servidor se rechaza)
+	local lc = tool:FindFirstChild("LeftClickRemote")
+	if lc then
+		pcall(function() lc:FireServer(Vector3.new(0.01, -500, 0.01), 1, true) end)
+	end
+end
+
+local function SimpleAttack(target)
+	if not target or not target.Parent then return end
+	local hrp = target:FindFirstChild("HumanoidRootPart") or target.PrimaryPart
+	if not hrp then return end
+	topos(CFrame.new(hrp.Position + Vector3.new(0, 15, 0)))
+	AutoHaki()
+	EquipWeapon()
+	FastAttack()
+end
+
+--===================== LOOP: INSTANT KILL + REMATE EN TODAS LAS ISLAS =====================
+-- Cada 0.05s: InstantKill a todo lo que exista (apenas aparece) y remate a todos juntos.
+task.spawn(function()
+	while true do
+		if Config.AutoRaid and Config.InstantKillAll and LocalPlayer:GetAttribute("IslandRaiding") then
+			pcall(function()
+				local lista = EnemigosEnRango(400)
+				if #lista > 0 then
+					InstantKill(lista)
+					RematarIsla()
+				end
+			end)
+		end
+		task.wait(0.05)
+	end
+end)
+
+--===================== FRUTA MAS BARATA =====================
+local FRUIT_RANK = {
+	["Rocket-Rocket"] = 1, ["Spin-Spin"] = 2, ["Blade-Blade"] = 3, ["Chop-Chop"] = 3,
+	["Spring-Spring"] = 4, ["Bomb-Bomb"] = 5, ["Smoke-Smoke"] = 6, ["Spike-Spike"] = 7,
+	["Flame-Flame"] = 8, ["Falcon-Falcon"] = 9, ["Ice-Ice"] = 10, ["Sand-Sand"] = 11,
+	["Dark-Dark"] = 12, ["Diamond-Diamond"] = 13, ["Light-Light"] = 14, ["Ghost-Ghost"] = 15,
+	["Rubber-Rubber"] = 16, ["Barrier-Barrier"] = 17, ["Magma-Magma"] = 18,
+}
+
+local function GetLowestFruit()
+	local ok, result = pcall(function()
+		return net:RemoteFunction("GetAllItemValues"):InvokeServer()
+	end)
+	if not ok or not result or type(result) ~= "table" then return nil end
+
+	local owned = {}
+	for _, item in ipairs(result) do
+		if item.Key == "IsOwned" and item.Value == true then
+			owned[item.ItemId] = true
+		end
+	end
+
+	local lowest, found = math.huge, nil
+	for itemId in pairs(owned) do
+		local ok2, res2 = pcall(function() return ItemConfig.match(itemId) end)
+		if ok2 and res2 and res2.isOk and res2:isOk() then
+			local unwrapped = res2:unwrap()
+			if unwrapped and unwrapped.Index and unwrapped.Index.IdType == "PhysicalMoveset" then
+				local label = tostring(unwrapped.Index.DebugLabel or unwrapped.Index.Name or "")
+				local name = label:match("^(.-)%s*%[") or label
+				local storageKey = tostring(unwrapped.Index.StorageKey or name)
+				local rank = FRUIT_RANK[name] or FRUIT_RANK[storageKey]
+				if rank and rank < lowest then
+					found = { Name = name, StorageKey = storageKey, ItemId = itemId, Rank = rank }
+					lowest = rank
+				end
+			end
+		end
+	end
+	return found
+end
+
+--===================== AUTO RAID (SOLO SE MUEVE DE ISLA) =====================
+local RaidToggle
+
+local function AutoRaidStep()
+	if Config.Autostopraid and fragments.Value >= (tonumber(Config.FragsCap) or 10000) then
+		Config.AutoRaid = false
+		if RaidToggle then RaidToggle:Set(false) end
+		Rayfield:Notify({ Title = "Raid Hub", Content = "Frags cap alcanzado - Auto Raid detenido.", Duration = 5 })
+		return
+	end
+
+	local RaidTimer = getRaidTimer()
+	if not RaidTimer then return end
+
+	if RaidTimer.Visible and LocalPlayer:GetAttribute("IslandRaiding") then
+		if Config.InstantKillAll then
+			-- El loop de arriba ya mata y remata todo.
+			-- Aqui SOLO se hace el unico tween: cambiar de isla cuando ya no queda nadie vivo.
+			if not HayEnemigosVivos() then
+				local island = GetRaidIslands()
+				if island then
+					topos(CFrame.new(island.Position + Vector3.new(0, 12, 0)))
+				end
+			end
+		else
+			local objetivo
+			for _, child in ipairs(enemies:GetChildren()) do
+				local hum = child:FindFirstChild("Humanoid")
+				local hrp = child:FindFirstChild("HumanoidRootPart")
+				if hum and hrp and hum.Health > 0 and LocalPlayer:DistanceFromCharacter(hrp.Position) < 500 then
+					objetivo = child
+					break
+				end
+			end
+
+			if objetivo then
+				SimpleAttack(objetivo)
+			else
+				local island = GetRaidIslands()
+				if island then
+					topos(CFrame.new(island.Position + Vector3.new(0, 12, 0)))
+				end
+			end
+		end
+	elseif CheckToolName("Special Microchip") and not RaidTimer.Visible
+		and not GetRaidIslands() and not LocalPlayer:GetAttribute("IslandRaiding") then
+		if isSea2 and map:FindFirstChild("CircleIsland") then
+			topos(CFrame.new(Vector3.new(-6522, 308, -4658)))
+			if humanoidRootPart and (humanoidRootPart.Position - Vector3.new(-6522, 308, -4658)).Magnitude <= 5 then
+				pcall(function() fireclickdetector(map.CircleIsland.RaidSummon2.Button.Main.ClickDetector) end)
+			end
+		elseif isSea3 and map:FindFirstChild("Boat Castle") then
+			topos(CFrame.new(Vector3.new(-5073, 315, -3153)))
+			if humanoidRootPart and (humanoidRootPart.Position - Vector3.new(-5073, 315, -3153)).Magnitude <= 5 then
+				pcall(function() fireclickdetector(map["Boat Castle"].RaidSummon2.Button.Main.ClickDetector) end)
+			end
+		end
+	elseif Config.SelectRaid and Config.AutoBuyChip and not CheckToolName("Special Microchip") then
+		if Config.AutoUnstoreBelowFruit and not Checkfruit() and not LocalPlayer:GetAttribute("IslandRaiding") then
+			local lowest = GetLowestFruit()
+			if lowest then
+				FireInvoke("LoadFruit", lowest.StorageKey or lowest.Name)
+				task.wait(0.5)
+				local fruit = Checkfruit()
+				if fruit and character then
+					local tool = LocalPlayer.Backpack:FindFirstChild(fruit)
+					if tool then humanoid:EquipTool(tool) end
+				end
+			end
+		elseif not LocalPlayer:GetAttribute("IslandRaiding") then
+			local fruit = Checkfruit()
+			if fruit and character then
+				local tool = LocalPlayer.Backpack:FindFirstChild(fruit)
+				if tool then humanoid:EquipTool(tool) end
+			end
+			FireInvoke("RaidsNpc", "Select", Config.SelectRaid)
+			task.wait(1)
+		else
+			task.wait(1)
+		end
+	end
+end
+
+--===================== DUNGEON HELPERS =====================
+local function GetDungeonProps(island)
+	if not island or not island:FindFirstChild("Props") then return nil end
+	for _, v in ipairs(island.Props:GetChildren()) do
+		if v:GetAttribute("KitsuneMarkActive") == true or v:GetAttribute("Speed") == 5 then
+			return v
+		end
+	end
+	return nil
+end
+
+local function GetDungeonIslands()
+	local dungeon = map:FindFirstChild("Dungeon")
+	if not dungeon then return nil end
+	local closest, closestIndex, best = nil, 0, math.huge
+	for i = 1, 100 do
+		local island = dungeon:FindFirstChild(tostring(i))
+		if island then
+			local pos = island:GetPivot().Position
+			local mag = (humanoidRootPart.Position - pos).Magnitude
+			local ext = island:GetExtentsSize()
+			if mag < math.max(ext.X, ext.Y, ext.Z) / 2 + 100 and mag < best then
+				best, closest, closestIndex = mag, island, i
+			end
+		end
+	end
+	if not closest then return nil end
+	if not dungeon:FindFirstChild(tostring(closestIndex + 1)) then return nil end
+	if closest:FindFirstChild("ExitTeleporter") and closest.ExitTeleporter:FindFirstChild("Root") then
+		return closest.ExitTeleporter.Root
+	end
+	return nil
+end
+
+local dungeonLast = 0
+
+local function AutoDungeonFullStep()
+	local dungeon = map:FindFirstChild("Dungeon")
+	if not dungeon then return end
+
+	local function getClosest()
+		local position = humanoidRootPart.Position
+		local best, bestIdx, bestDist = nil, 0, math.huge
+		for i = 1, 100 do
+			local isl = dungeon:FindFirstChild(tostring(i))
+			if isl then
+				local p = isl:GetPivot().Position
+				local d = math.sqrt((position.X - p.X) ^ 2 + (position.Z - p.Z) ^ 2)
+				local ext = isl:GetExtentsSize()
+				if d < math.max(ext.X, ext.Z) / 2 + 300 and d < bestDist then
+					bestDist, best, bestIdx = d, isl, i
+				end
+			end
+		end
+		return best, bestIdx
+	end
+
+	local function getMobs(isl)
+		local list = {}
+		if not isl then return list end
+		local ext = isl:GetExtentsSize()
+		local radius = math.max(ext.X, ext.Z) / 2 + 300
+		local p = isl:GetPivot().Position
+		for _, child in ipairs(enemies:GetChildren()) do
+			if child:IsDescendantOf(Workspace) and child:FindFirstChild("Humanoid")
+				and child.Humanoid.Health > 0 and child:FindFirstChild("HumanoidRootPart")
+				and child.Name ~= "Blank Buddy" and not string.find(string.lower(child.Name), "shadow") then
+				local cp = child.HumanoidRootPart.Position
+				if math.sqrt((p.X - cp.X) ^ 2 + (p.Z - cp.Z) ^ 2) < radius then
+					table.insert(list, child)
+				end
+			end
+		end
+		return list
+	end
+
+	local island, idx = getClosest()
+	local mobs = getMobs(island)
+
+	if Config.AutoDungeonShrine and idx == dungeonLast then
+		local prop = GetDungeonProps(island)
+		if prop then
+			local pp = prop:GetPivot().Position
+			if LocalPlayer:DistanceFromCharacter(pp) > 10 then
+				topos(CFrame.new(pp + Vector3.new(0, 5, 0)))
+			else
+				AutoHaki()
+				EquipWeapon()
+				FastAttack()
+			end
+			return
+		end
+	end
+
+	if #mobs == 0 then
+		local t0 = tick()
+		while true do
+			task.wait(0.5)
+			island, idx = getClosest()
+			mobs = getMobs(island)
+			if #mobs > 0 or tick() - t0 > 2 then break end
+		end
+	end
+
+	if #mobs > 0 then
+		dungeonLast = idx
+		local target = mobs[1]
+		local tool = character and character:FindFirstChildOfClass("Tool")
+		local y = (target:FindFirstChild("HumanoidRootPart") and target.HumanoidRootPart.Position.Y or 0)
+			> (island and island:GetPivot().Position.Y or 0) + 100 and 0
+			or (tool and tool.ToolTip == "Blox Fruit" and 20 or 30)
+		if target.Parent and target:FindFirstChild("HumanoidRootPart") then
+			topos(CFrame.new(target.HumanoidRootPart.Position + Vector3.new(0, y, 0)))
+			EquipWeapon()
+			AutoHaki()
+			FastAttack()
+		end
+	elseif island then
+		local exitPart = GetDungeonIslands()
+		if exitPart and LocalPlayer:DistanceFromCharacter(exitPart.Position) > 20 then
+			topos(CFrame.new(exitPart.Position + Vector3.new(0, 10, 0)))
+			task.wait(1)
+		end
+	end
+end
+
+--===================== OTRAS FUNCIONES =====================
+local function AutoAwakenStep()
+	FireInvoke("Awakener", "Check")
+	FireInvoke("Awakener", "Awaken")
+end
+
+local function RandomAutoStep()
+	if FireInvoke("Cousin", "CheckTime", "DLCBoxData") == true then
+		local res = FireInvoke("Cousin", "DLCBoxData")
+		if res == 1 then
+			Rayfield:Notify({ Title = "Random Fruit", Content = "Comprado con exito!", Duration = 5 })
+		elseif res == 2 then
+			Rayfield:Notify({ Title = "Random Fruit", Content = "Sin dinero suficiente.", Duration = 5 })
+		elseif res == 3 then
+			Rayfield:Notify({ Title = "Random Fruit", Content = "Requiere nivel 50.", Duration = 5 })
+		end
+	end
+	local spinner = LocalPlayer.PlayerGui:FindFirstChild("SpinnerWindow")
+	if spinner then
+		local nav = spinner:FindFirstChild("AboveSpinner") and spinner.AboveSpinner:FindFirstChild("Navigation")
+		local close = nav and nav:FindFirstChild("CloseButton")
+		if close and close.Visible then pcall(function() firesignal(close.Activated) end) end
+	end
+end
+
+local storeDebounce = {}
+local function AutoStoreFruitStep()
+	for _, container in ipairs({
+		LocalPlayer:FindFirstChild("Backpack"),
+		character,
+		Workspace:FindFirstChild("Characters") and Workspace.Characters:FindFirstChild(LocalPlayer.Name),
+	}) do
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if child:IsA("Tool") and string.find(child.Name, "Fruit") then
+					local original = child:GetAttribute("OriginalName") or child.Name:match("^(.-)%-") or child.Name
+					if tick() - (storeDebounce[original] or 0) > 45 then
+						local res = FireInvoke("StoreFruit", original, child)
+						task.wait(0.3)
+						if not child:IsDescendantOf(game) or child.Parent == nil or res == true then
+							storeDebounce[original] = nil
+						else
+							storeDebounce[original] = tick()
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+local function TweenfruitStep()
+	local closest, best = nil, math.huge
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child:IsA("Model") and child.Name:find("Fruit") then
+			local handle = child:FindFirstChild("Handle") or child:FindFirstChildWhichIsA("BasePart")
+			if handle and humanoidRootPart then
+				local mag = (handle.Position - humanoidRootPart.Position).Magnitude
+				if mag < best then best, closest = mag, handle end
+			end
+		end
+	end
+	if closest then
+		topos(closest.CFrame)
+	elseif Config.HopIfNoFruit then
+		LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible = LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+	end
+end
+
+local fruitSeen = {}
+local function FruitCheckStep()
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child:IsA("Model") and string.find(child.Name, "Fruit") then
+			local name = child.Name == "Fruit" and "Spawned Unknown Fruit" or child.Name
+			if not fruitSeen[child] then
+				fruitSeen[child] = true
+				Rayfield:Notify({ Title = "Blox Fruit Spawned", Content = name .. " aparecio en el mapa!", Duration = 12 })
+			end
+		end
+	end
+end
+
+local function AutoCardsDungeonStep()
+	local cards = Config.CardsSelection
+	if not cards then return end
+	local list = type(cards) == "table" and cards or { cards }
+	if #list == 0 then return end
+	for _, desc in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+		if desc:IsA("TextLabel") and desc.Name == "DisplayName" and desc.Text then
+			local text = string.lower(desc.Text:gsub("<[^>]+>", ""))
+			for _, card in ipairs(list) do
+				if string.find(text, string.lower(card)) then
+					local parent = desc.Parent
+					if parent and parent.Activated then
+						firesignal(parent.Activated)
+						return
+					end
+				end
+			end
+		end
+	end
+end
+
+local function AutoLawRaidStep()
+	if CheckToolName("Order") then
+		local objetivo = nil
+		for _, child in ipairs(enemies:GetChildren()) do
+			if child.Name == "Order" and child:FindFirstChild("Humanoid") and child.Humanoid.Health > 0 then
+				objetivo = child
+				break
+			end
+		end
+		if objetivo then
+			SimpleAttack(objetivo)
+		else
+			topos(CFrame.new(-6300, 16, -4997))
+		end
+		return
+	end
+	if not CheckToolName("Microchip") then
+		FireInvoke("BlackbeardReward", "Microchip", "2")
+	else
+		topos(CFrame.new(Vector3.new(-5544, 229, -5938)))
+		if humanoidRootPart and (humanoidRootPart.Position - Vector3.new(-5544, 229, -5938)).Magnitude <= 5 then
+			pcall(function() fireclickdetector(map.CircleIsland.RaidSummon.Button.Main.ClickDetector) end)
+		end
+	end
+end
+
+--===================== SCHEDULER =====================
+local Scheduler = {}
+local function AddLoop(flag, func, interval)
+	table.insert(Scheduler, { Flag = flag, Func = func, Interval = interval or 0.1, Last = 0 })
+end
+
+AddLoop("AutoRaid", AutoRaidStep, 0.1)
+AddLoop("AutoAwaken", AutoAwakenStep, 0.5)
+AddLoop("Random_Auto", RandomAutoStep, 0.5)
+AddLoop("AutoStoreFruit", AutoStoreFruitStep, 1)
+AddLoop("Tweenfruit", TweenfruitStep, 0.1)
+AddLoop("FruitCheck", FruitCheckStep, 1)
+AddLoop("AutoCardsDungeon", AutoCardsDungeonStep, 0.3)
+AddLoop("AutoDungeonFull", AutoDungeonFullStep, 0.1)
+AddLoop("AutoLawRaid", AutoLawRaidStep, 0.2)
+
+task.spawn(function()
+	while true do
+		local now = tick()
+		for _, loop in ipairs(Scheduler) do
+			if Config[loop.Flag] and now - loop.Last >= loop.Interval then
+				loop.Last = now
+				pcall(loop.Func)
+			end
+		end
+		task.wait(0.05)
+	end
+end)
+
+--===================== LISTA DE RAIDS =====================
+local raidList = {}
+pcall(function()
+	local Raids = require(ReplicatedStorage.Raids)
+	local function add(t)
+		for k, v in pairs(t) do
+			if type(k) == "string" then
+				table.insert(raidList, k)
+			elseif type(v) == "string" then
+				table.insert(raidList, v)
+			elseif type(v) == "table" and v.Name then
+				table.insert(raidList, v.Name)
+			end
+		end
+	end
+	add(Raids.raids)
+	add(Raids.advancedRaids)
+end)
+if #raidList == 0 then
+	raidList = { "Flame", "Ice", "Quake", "Light", "Dark", "String", "Rumble", "Magma", "Buddha", "Love", "Spider", "Sound", "Phoenix", "Portal", "Blizzard", "Pain", "Gravity" }
+end
+
+--===================== UI (RAYFIELD) =====================
+local Window = Rayfield:CreateWindow({
+	Name = "Raid Hub",
+	LoadingTitle = "Raid Hub",
+	LoadingSubtitle = "Instant Kill - All Islands",
+	ConfigurationSaving = { Enabled = true, FolderName = "RaidHub", FileName = "Config" },
+	KeySystem = false,
+})
+
+local Tab = Window:CreateTab("Raid Hub", 4483362458)
+
+-- ---------- AUTO RAID ----------
+Tab:CreateSection("Auto Raid")
+
+Tab:CreateDropdown({
+	Name = "Raid Chip",
+	Options = raidList,
+	CurrentOption = { raidList[1] },
+	Flag = "SelectRaid",
+	Callback = function(option)
+		Config.SelectRaid = type(option) == "table" and option[1] or option
+	end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Buy Chip",
+	CurrentValue = false,
+	Flag = "AutoBuyChip",
+	Callback = function(v) Config.AutoBuyChip = v end,
+})
+
+RaidToggle = Tab:CreateToggle({
+	Name = "Auto Complete Raid",
+	CurrentValue = false,
+	Flag = "AutoRaid",
+	Callback = function(v)
+		Config.AutoRaid = v
+		if not v then stopTween() end
+	end,
+})
+
+Tab:CreateToggle({
+	Name = "Instant Kill ALL Islands (1 a 5 + remate)",
+	CurrentValue = true,
+	Flag = "InstantKillAll",
+	Callback = function(v) Config.InstantKillAll = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Unstore Below 1m Fruit",
+	CurrentValue = false,
+	Flag = "AutoUnstoreBelowFruit",
+	Callback = function(v) Config.AutoUnstoreBelowFruit = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Awaken",
+	CurrentValue = false,
+	Flag = "AutoAwaken",
+	Callback = function(v) Config.AutoAwaken = v end,
+})
+
+Tab:CreateSlider({
+	Name = "Frags Cap",
+	Range = { 1000, 1000000 },
+	Increment = 1000,
+	Suffix = "frags",
+	CurrentValue = 1000,
+	Flag = "FragsCap",
+	Callback = function(v) Config.FragsCap = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Stop Raid When Frags Reach Cap",
+	CurrentValue = false,
+	Flag = "Autostopraid",
+	Callback = function(v) Config.Autostopraid = v end,
+})
+
+-- ---------- DUNGEON ----------
+Tab:CreateSection("Dungeon")
+
+Tab:CreateToggle({
+	Name = "Auto Unlock Difficulties",
+	CurrentValue = false,
+	Callback = function(v)
+		if v then
+			pcall(function()
+				ReplicatedStorage.DungeonShared.DataRemote:InvokeServer("TryUnlockDifficulty", "Simulation", "Hard")
+				ReplicatedStorage.DungeonShared.DataRemote:InvokeServer("TryUnlockDifficulty", "Simulation", "Challenge")
+				net["RF/DungeonNPCNetworkFunction"]:InvokeServer("UnlockDifficulty")
+				net["RF/DungeonNPCNetworkFunction"]:InvokeServer("UnlockNext")
+			end)
+			Rayfield:Notify({ Title = "Dungeon", Content = "Intentando desbloquear dificultad", Duration = 4 })
+		end
+	end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Complete Dungeon",
+	CurrentValue = false,
+	Flag = "AutoDungeonFull",
+	Callback = function(v) Config.AutoDungeonFull = v; if not v then stopTween() end end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Destroy Shrines and Vents",
+	CurrentValue = false,
+	Flag = "AutoDungeonShrine",
+	Callback = function(v) Config.AutoDungeonShrine = v end,
+})
+
+Tab:CreateDropdown({
+	Name = "Select Cards",
+	Options = { "Hyper", "Overflow", "Fortress", "Shadow", "Sniper", "Lifesteal", "Unbreakable", "Health", "Defense", "Armor", "Melee", "Sword", "Fruit", "Gun" },
+	CurrentOption = { "Hyper" },
+	MultipleOptions = true,
+	Flag = "CardsSelection",
+	Callback = function(opt) Config.CardsSelection = opt end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Select Cards",
+	CurrentValue = false,
+	Flag = "AutoCardsDungeon",
+	Callback = function(v) Config.AutoCardsDungeon = v end,
+})
+
+Tab:CreateButton({
+	Name = "Unlock Next Difficulty",
+	Callback = function()
+		pcall(function()
+			ReplicatedStorage.DungeonShared.DataRemote:InvokeServer("TryUnlockDifficulty", "Simulation", "Hard")
+			ReplicatedStorage.DungeonShared.DataRemote:InvokeServer("TryUnlockDifficulty", "Simulation", "Challenge")
+			net["RF/DungeonNPCNetworkFunction"]:InvokeServer("UnlockDifficulty")
+			net["RF/DungeonNPCNetworkFunction"]:InvokeServer("UnlockNext")
+		end)
+		Rayfield:Notify({ Title = "Dungeon", Content = "Intentando desbloquear dificultad", Duration = 4 })
+	end,
+})
+
+Tab:CreateButton({
+	Name = "Teleport to Dungeon Map",
+	Callback = function() pcall(function() net["RF/DungeonNPCNetworkFunction"]:InvokeServer("TeleportToDungeonHub", false) end) end,
+})
+
+Tab:CreateButton({
+	Name = "Return to Previous Sea",
+	Callback = function() pcall(function() net["RF/DungeonNPCNetworkFunction"]:InvokeServer("TeleportBack") end) end,
+})
+
+-- ---------- LAW RAID ----------
+Tab:CreateSection("Law Raid")
+Tab:CreateToggle({
+	Name = "Start Law Raid Farm",
+	CurrentValue = false,
+	Flag = "AutoLawRaid",
+	Callback = function(v) Config.AutoLawRaid = v; if not v then stopTween() end end,
+})
+
+-- ---------- FRUTAS ----------
+Tab:CreateSection("Fruit")
+
+Tab:CreateButton({
+	Name = "Open Normal Shop",
+	Callback = function() pcall(function() require(ReplicatedStorage.Controllers.UI.FruitShop):Open() end) end,
+})
+
+Tab:CreateButton({
+	Name = "Open Advanced Shop",
+	Callback = function() pcall(function() require(ReplicatedStorage.Controllers.UI.FruitShop):Open("AdvancedFruitDealer") end) end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Roll Fruit",
+	CurrentValue = false,
+	Flag = "Random_Auto",
+	Callback = function(v) Config.Random_Auto = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Auto Store Fruit",
+	CurrentValue = false,
+	Flag = "AutoStoreFruit",
+	Callback = function(v) Config.AutoStoreFruit = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Teleport to Fruit",
+	CurrentValue = false,
+	Flag = "Tweenfruit",
+	Callback = function(v) Config.Tweenfruit = v; if not v then stopTween() end end,
+})
+
+Tab:CreateToggle({
+	Name = "Hop If No Fruit In Server",
+	CurrentValue = false,
+	Flag = "HopIfNoFruit",
+	Callback = function(v) Config.HopIfNoFruit = v end,
+})
+
+Tab:CreateToggle({
+	Name = "Fruit Notification",
+	CurrentValue = false,
+	Flag = "FruitCheck",
+	Callback = function(v) Config.FruitCheck = v end,
+})
+
+-- ---------- TRINKETS ----------
+Tab:CreateSection("Trinkets & Refiner")
+
+local function GetTrinketUIDs()
+	local uids = {}
+	pcall(function()
+		local res = net:RemoteFunction("GetAllItemValues"):InvokeServer()
+		if res then
+			for _, item in next, res, nil do
+				if (item.Key == "AccessoryType" and item.Value == "Trinket") or (item.Key == "Type" and item.Value == "Trinket") then
+					if item.NetworkedUID then table.insert(uids, item.NetworkedUID) end
+				end
+			end
+		end
+	end)
+	return uids
+end
+
+Tab:CreateButton({
+	Name = "Buy Trinket",
+	Callback = function()
+		Rayfield:Notify({ Title = "Trinkets", Content = pcall(function() return remotes.AccessoryInteract:InvokeServer("d") end) and "Trinket comprado!" or "Fallo al comprar.", Duration = 4 })
+	end,
+})
+
+Tab:CreateButton({
+	Name = "Fuse / Merge 3 Trinkets",
+	Callback = function()
+		local uids = GetTrinketUIDs()
+		if #uids >= 3 then
+			Rayfield:Notify({ Title = "Trinkets", Content = pcall(function() return remotes.AccessoryInteract:InvokeServer("a", uids[1], uids[2], uids[3]) end) and "3 Trinkets fusionados!" or "Fallo al fusionar.", Duration = 4 })
+		else
+			Rayfield:Notify({ Title = "Trinkets", Content = "Necesitas al menos 3 trinkets (tienes: " .. #uids .. ")", Duration = 4 })
+		end
+	end,
+})
+
+Tab:CreateButton({
+	Name = "Reforge / Refine Trinket",
+	Callback = function()
+		local uids = GetTrinketUIDs()
+		if #uids >= 1 then
+			Rayfield:Notify({ Title = "Trinket Refiner", Content = pcall(function() return remotes.AccessoryInteract:InvokeServer("c", uids[1]) end) and "Trinket refinado!" or "Fallo al refinar.", Duration = 4 })
+		else
+			Rayfield:Notify({ Title = "Trinket Refiner", Content = "No hay trinket para refinar.", Duration = 4 })
+		end
+	end,
+})
+
+Tab:CreateButton({
+	Name = "Open Trinket Merge GUI",
+	Callback = function() pcall(function() LocalPlayer.PlayerGui:WaitForChild("AccessoryMerge").Open:Fire(false) end) end,
+})
+
+Tab:CreateButton({
+	Name = "Open Trinket Refiner GUI",
+	Callback = function() pcall(function() LocalPlayer.PlayerGui:WaitForChild("AccessoryMerge").Open:Fire(true) end) end,
+})
+
+Tab:CreateButton({
+	Name = "Open Trinket Scrap / Trash GUI",
+	Callback = function() pcall(function() LocalPlayer.PlayerGui:WaitForChild("AccessoryTrasher").Open:Fire() end) end,
+})
+
+--===================== AVISO DE INICIO =====================
+Rayfield:Notify({
+	Title = "Raid Hub",
+	Content = "Cargado. InstantKill en islas 1-5 + remate real.",
+	Duration = 6,
+	Image = 4483362458,
+})
